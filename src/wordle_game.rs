@@ -89,7 +89,7 @@ pub struct GameState  {
     word: [u8; 5],
     prev_guesses: Vec<Guess>,
     max_guesses: u8,
-    guess_count: u8,
+    pub guess_count: u8,
     freq_array: [u8; 26],
     pub status: GameStatus
 }

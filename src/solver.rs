@@ -15,13 +15,17 @@ pub struct Solver {
     word_list: Vec<[u8; 5]>,
     in_candidate_list: Vec<bool>,
     candidates: Vec<usize>,
-    invalid_indexes: [u8; 26], // 5 bit bitfield for if index is invalid  
+    invalid_indexes: [u8; 26], // 5 bit bitfield for if index is invalid
+    best_first_guess: Option<usize>,
 
     invalid_letters: u32,
 }
 
+pub enum SolveResult {
+    Ok(u8),
+    Fail
+}
 
-    
 impl Solver { 
 
 
@@ -49,6 +53,7 @@ impl Solver {
         Solver {
             feedback_map: map,
             word_list,
+            best_first_guess: None,
             candidates: Vec::new(),
             in_candidate_list: vec![true; length],
             invalid_indexes: [0; 26],
@@ -57,29 +62,61 @@ impl Solver {
     }
 
 
-   pub fn solve(&mut self ,game: &mut GameState){
+
+
+    
+
+   pub fn solve(&mut self ,game: &mut GameState, print_solve: bool ) -> SolveResult {
+
         // reset the state of the Solver for each new solve
         self.candidates = (0..self.word_list.len()).collect();
         self.invalid_indexes = [0;26];
         self.invalid_letters = 0;
 
-
-
         while game.status == GameStatus::INPROGRESS {
-            game.print_state();
-            let word = self.pick_word();
+
+            if print_solve {
+                game.print_state();
+            }
+
+            // We want to cache the first guess that the solver picks as it is deterministic
+            // for the first guess given we have no information.
+            // Since the first guess takes the longest to compute give we need to search n^2 
+            // of the whole word list, we cache it for performance 
+            let word = if game.guess_count != 0 { 
+                self.pick_word()
+            } else {
+                match self.best_first_guess {
+                    Some(index) => index,
+                    None => {
+                        let best_guess = self.pick_word();
+                        self.best_first_guess = Some(best_guess);
+                        best_guess
+                    }
+                }
+            };
+
+
 
             let guess = game.make_guess(self.word_list[word]);
 
-            println!("Guessing: {}", String::from_utf8(self.word_list[word].to_vec()).unwrap());
-            self.update_state(word, guess);
+            if print_solve {
+                println!("Guessing: {}",
+                    String::from_utf8(self.word_list[word].to_vec()).unwrap());
+            }
+                self.update_state(word, guess);
         }
 
-        game.print_state();
+        if print_solve {
+            game.print_state();
+        }
 
 
-
-
+        match game.status {
+            GameStatus::WINNER => SolveResult::Ok(game.guess_count),
+            GameStatus::LOSER => SolveResult::Fail,
+            GameStatus::INPROGRESS => unreachable!()
+        }
     }
 
     // Update the state of the solver based on the feedback from the guess and then filter candidates
