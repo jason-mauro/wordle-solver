@@ -1,8 +1,8 @@
 pub struct Guess {
-    pub letters: Vec<Letter>
+    pub letters: [Letter; 5]
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LetterValue {
     A, B, C, D, E, F, G, H, I, J, K, L, M,
     N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
@@ -52,18 +52,19 @@ impl LetterValue {
     pub fn get_value(c: u8) -> LetterValue{
         match LetterValue::try_from(c) {
             Ok(value) => value,
-            Err(()) => panic!("Invalid letter value!"),
+            Err(()) => panic!("Invalid letter value! {}", c),
         }
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LetterState{
     CORRECT, // In the word
     PRESENT, // Wrong place
     ABSENT
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct Letter {
     pub value: LetterValue,
     pub state: LetterState

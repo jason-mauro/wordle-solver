@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::io::{self, Write};
 
 
-pub fn play(valid_words: &HashSet<&str>, word: &str){
+pub fn play(valid_words: &HashSet<&str>, word: [u8; 5]){
 
 
     let mut gamestate = GameState::new(word);
@@ -48,7 +48,9 @@ pub fn play(valid_words: &HashSet<&str>, word: &str){
             continue;
         }
 
-        gamestate.make_guess(&input); 
+        let guess: [u8; 5] = input.as_bytes().try_into().unwrap();
+
+        gamestate.make_guess(guess); 
     }
 
 
@@ -83,8 +85,8 @@ pub enum GameStatus {
     LOSER
 }
 
-pub struct GameState <'a> {
-    word: &'a str,
+pub struct GameState  {
+    word: [u8; 5],
     prev_guesses: Vec<Guess>,
     max_guesses: u8,
     guess_count: u8,
@@ -92,14 +94,13 @@ pub struct GameState <'a> {
     pub status: GameStatus
 }
 
-impl<'a> GameState <'a> {
-
-    pub fn new (word : &'a str) -> GameState<'a> {
+impl GameState {
+    pub fn new (word : [u8; 5]) -> GameState {
         let mut freq_array: [u8; 26] = [0; 26];
 
         // assume everything lowercase ascii
-        for c in word.to_ascii_lowercase().bytes(){
-            freq_array[(c- b'a') as usize] += 1;
+        for i in 0..5 { 
+            freq_array[(word[i]- b'a') as usize] += 1;
         }
 
         GameState {
@@ -112,7 +113,7 @@ impl<'a> GameState <'a> {
         }
     }
 
-    pub fn make_guess(&mut self, user_guess: &str) -> &Guess {
+    pub fn make_guess(&mut self, user_guess: [u8; 5]) -> &Guess {
         self.guess_count += 1;
 
         // If at max guesses, we set the state to loss, but update if correct
@@ -124,30 +125,33 @@ impl<'a> GameState <'a> {
 
         let mut freq_table: [u8;26] = self.freq_array;
 
-        let letters: Vec<Letter> = 
-            std::iter::zip(self.word.bytes(), user_guess.to_ascii_lowercase().bytes())
-            .map(|(expected, actual)| 
-        {
-            let index = (actual - b'a') as usize;
-            match freq_table[index] {
-                0 => Letter::get_letter(actual, LetterState::ABSENT),
-                _ => {
-                    freq_table[index] -= 1;
-                    
-                    let state = match actual == expected {
-                        true => { 
-                            number_correct += 1;
-                            LetterState::CORRECT
-                        }
-                        false => LetterState::PRESENT
-                    };
+        let mut letters: [Letter; 5] = user_guess.iter()
+            .map(|c| Letter::get_letter(*c, LetterState::ABSENT))
+            .collect::<Vec<Letter>>()
+            .try_into()
+            .expect("guess expected 5 letters");
 
-                    Letter::get_letter(actual, state)
+        for i in 0..5 { 
+            if self.word[i] == user_guess[i]{
+                number_correct += 1;
+                let c =(user_guess[i] - b'a') as usize; 
+                letters[i] = Letter::get_letter(user_guess[i], LetterState::CORRECT);
+                freq_table[c] -= 1;
+            }
+        }
+
+
+        for i in 0..5 { 
+            if self.word[i] != user_guess[i]{
+                let c = (user_guess[i] - b'a') as usize;
+                if freq_table[c] > 0 {
+                    letters[i] = Letter::get_letter(user_guess[i], LetterState::PRESENT);
+                    freq_table[c] -= 1;
                 }
             }
-        }).collect();
+        }
 
-        if number_correct == 5 {
+       if number_correct == 5 {
             self.status = GameStatus::WINNER;
         }
 
@@ -157,10 +161,10 @@ impl<'a> GameState <'a> {
 
         self.prev_guesses.push(guess);
 
-        return self.prev_guesses.last().unwrap();
+        self.prev_guesses.last().unwrap()
     }
             
-    pub fn print_state(&self) {
+    pub fn print_state(&mut self) {
         for guess in self.prev_guesses.as_slice() {
             let mut buff: [char; 11] = [' ';11];
             for (i, letter) in guess.letters.as_slice().iter().enumerate() {

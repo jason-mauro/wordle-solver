@@ -2,50 +2,57 @@ use crate::wordle_game::GameState;
 use crate::wordle_game::GameStatus;
 use crate::word::*;
 
-use std::collections::HashMap;
 
 use std::io::{self, Write};
-
-pub struct Solver<'a> {
+use rayon::prelude::*;
+pub struct Solver {
     // Cached map of each possible (answer, guess) -> possible feedbacks
     // The feedback is encoded in base 3 as 1 bit of 3 for each guess type.
     // 0 = miss
     // 1 = yellow
     // 2 = green
-    feedback_map: HashMap<(usize, usize), u8>,
-
-    word_list: Vec<&'a str>,
+    feedback_map: Vec<u8>,
+    word_list: Vec<[u8; 5]>,
+    in_candidate_list: Vec<bool>,
     candidates: Vec<usize>,
     invalid_indexes: [u8; 26], // 5 bit bitfield for if index is invalid  
 
     invalid_letters: u32,
-
-
 }
+
+
     
-impl<'a> Solver<'a> { 
+impl Solver { 
 
 
+   const POWER_OF_THREE: [u8; 5] = [1, 3,9,27,81];
 
-   pub fn new(word_list: Vec<&'a str>) -> Solver<'a> {
+   pub fn new(word_list: Vec<[u8; 5]>) -> Solver {
 
-        let mut map = HashMap::new();
 
-        for (word_index, word) in word_list.as_slice().iter().enumerate(){ 
-            for (guess_index, guess) in word_list.as_slice().iter().enumerate() { 
-                map.insert((word_index, guess_index), Self::feedback(word, guess));
-            }
-        }
+        let length = word_list.len();
 
-        println!("MAKING NEW");
+        let mut map =  vec![0u8; length * length]; 
+
+        map.par_chunks_mut(length)
+            .enumerate()
+            .for_each(|(answer_idx, row)| {
+                let answer = word_list[answer_idx];
+
+                for (guess_idx, guess) in word_list.iter().enumerate() {
+                    row[guess_idx] = Self::feedback(answer, *guess);
+                }
+            });
+        
 
         io::stdout().flush().expect("Failed to flush stdout");
         Solver {
             feedback_map: map,
             word_list,
             candidates: Vec::new(),
+            in_candidate_list: vec![true; length],
             invalid_indexes: [0; 26],
-            invalid_letters: 0
+            invalid_letters: 0,
         }
     }
 
@@ -64,73 +71,83 @@ impl<'a> Solver<'a> {
 
             let guess = game.make_guess(self.word_list[word]);
 
-            self.update_state(guess);
-
-            println!("IN SOLVING");
+            println!("Guessing: {}", String::from_utf8(self.word_list[word].to_vec()).unwrap());
+            self.update_state(word, guess);
         }
 
         game.print_state();
 
 
 
-        
-
 
     }
 
     // Update the state of the solver based on the feedback from the guess and then filter candidates
-    fn update_state(&mut self, guess: &Guess){
+    fn update_state(&mut self, word: usize, guess: &Guess){
         let mut seen = 0;
-        for (index, letter) in guess.letters.iter().enumerate() {
-            match letter.state {
-                LetterState::ABSENT => {
-                    if !(seen & 1 << letter.value as u8 != 0){
-                        self.invalid_letters |= 1 << letter.value as u8;
-                    }
-                },
+
+        let mut feedback = 0u8;
+
+        for i in 0..5 {
+            let letter = guess.letters[i];
+
+            match letter.state  {
                 LetterState::PRESENT => {
+                    feedback += Self::POWER_OF_THREE[i];
                     seen |= 1 << letter.value as u8;
-                    self.invalid_indexes[letter.value as usize] |= 1 << index
+                    self.invalid_indexes[letter.value as usize] |= 1 << i 
+
                 },
                 LetterState::CORRECT => {
+                    feedback += 2 * Self::POWER_OF_THREE[i];
                     seen |= 1 << letter.value as u8;
-
                 },
+                LetterState::ABSENT => {}
             }
+
         }
 
-        self.filter_candidates();
+        for i in 0..5 {
+            let letter = guess.letters[i];
+            
+            if letter.state == LetterState::ABSENT && 
+                !(seen & 1 << letter.value as u8 != 0) {
+                    self.invalid_letters |= 1 << letter.value as u8;
+                }
+        }
+
+        self.filter_candidates(word, feedback);
 
     }
 
 
-    fn feedback(answer: &str, guess: &str) -> u8{
-
-        let mut curr_power = 0;
-
+    fn feedback(answer: [u8; 5], guess: [u8; 5]) -> u8 {
         let mut result: u8 = 0;
 
-        let mut map = HashMap::new();
+        let mut map = [0; 26];
 
-        for c in answer.bytes() {
-            *map.entry(c).or_insert(0) += 1;
+        for i in 0..5 {
+            map[(answer[i] - b'a') as usize] += 1;
         }
 
-        for (expected, actual) in answer.bytes().zip(guess.bytes()) {
-            if expected == actual {
-                *map.entry(expected).or_insert(0) -= 1;
-                result += 2 * ((3 as i32).pow(curr_power) as u8);
-            } else if let Some(count) = map.get(&actual) {
-                match *count {
-                    0 =>{},
-                    _ => {
-                        *map.entry(actual).or_insert(1) -= 1;
-                        result += (3 as i32).pow(curr_power) as u8 
-                    }
+        for i in 0..5 { 
+            if answer[i] == guess[i]{
+                result += 2 * Self::POWER_OF_THREE[i];
+                map[(guess[i] - b'a') as usize] -= 1;
+            }
+        }
+
+
+        for i in 0..5 { 
+            if answer[i] != guess[i] {
+                let c = (guess[i] - b'a') as usize;
+                if map[c] > 0 {
+                    result += Self::POWER_OF_THREE[i];
+                    map[c] -= 1;
                 }
-            } 
-            curr_power += 1;
+            }
         }
+
         result
     }
 
@@ -153,22 +170,25 @@ impl<'a> Solver<'a> {
     pub fn calculate_entropy(&self, guess: usize) -> f32 {
         let candidate_size = self.candidates.len();
 
-        let mut counter: HashMap<u8, u32> = HashMap::new();
-            
-        for candidate in self.candidates.as_slice() {
-           match self.feedback_map.get(&(*candidate, guess)) {
-                Some(value) => {
-                    let count_ref = counter.entry(*value).or_insert(0);
-                    *count_ref += 1;
-                },
-                None => panic!("missing feedback entry")
-           }
+        let mut counter = [0; 243];           
+
+        let n = self.word_list.len();
+
+        for i in 0..candidate_size {
+            let feedback = self.feedback_map[self.candidates[i] * n + guess ] as usize;
+            counter[feedback] += 1;
         }
 
-         -counter.values().map(|value| {
+         let entropy = -counter.iter()
+             .filter(|&&count| count > 0)
+             .map(|value| {
                 let p = (*value as f32) / (candidate_size as f32);
                 p * p.log2()
-            }).sum::<f32>()
+            }).sum::<f32>();
+
+         let candidate_bonus = if self.in_candidate_list[guess] { 0.75f32 } else { 0f32 };
+
+         entropy + candidate_bonus
     }
 
 
@@ -180,50 +200,43 @@ impl<'a> Solver<'a> {
      */
 
     fn pick_word(&self) -> usize{
-        let mut choosen_word: usize = 0;
+        let mut chosen_word: usize = 0;
         let mut max_entropy = f32::MIN;
 
-        if self.candidates.is_empty() {
-            panic!("No candidates!");
-        }
 
+        if self.candidates.len() <= 5 {
+            for &word in &self.candidates {
+                let entropy = self.calculate_entropy(word);
 
-
-        // choose the word with the most entropy
-        for word in self.candidates.as_slice() {
-            let entropy = self.calculate_entropy(*word);
-            if entropy > max_entropy {
-                max_entropy = entropy;
-                choosen_word = *word
+                if entropy > max_entropy {
+                    max_entropy = entropy;
+                    chosen_word = word;
+                }
             }
-            max_entropy = f32::max(max_entropy, entropy);
+        } else {
+            // More candidates: allow information-gathering guesses.
+            for word in 0..self.word_list.len() {
+                let entropy = self.calculate_entropy(word);
+
+                if entropy > max_entropy {
+                    max_entropy = entropy;
+                    chosen_word = word;
+                }
+            }
         }
 
-        choosen_word
+        chosen_word
     }
 
-    fn filter_candidates(&mut self) {
-        println!("Candidates before {}", self.candidates.len());
+    fn filter_candidates(&mut self, guess: usize, feedback: u8) {
+        let n = self.word_list.len();
         
         self.candidates = self.candidates
             .iter()
             .filter(|candidate|
                 {
-                    let word = self.word_list[**candidate];
-
-                    // Either we have a letter which is invalid (not in the answer)
-                    // OR 
-                    // we have a letter which is in the word, but is not valid at that index
-
-                    for (index, c) in word.bytes().enumerate() {
-                        let letter_index = (c - b'a') as usize;
-                        if self.invalid_letters & 1 << letter_index != 0 ||
-                            self.invalid_indexes[letter_index] & 1 << index != 0 {
-                            return false;
-                        } 
-                    }
-                true
-                }).copied().collect()
+                    self.feedback_map[**candidate * n + guess] == feedback
+                }).copied().collect();
     }
 
 

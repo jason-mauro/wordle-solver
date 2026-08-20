@@ -52,34 +52,21 @@ fn main() {
                 word_list.insert(word);
             }
 
-            wordle_game::play(&word_set, "hello");
+            wordle_game::play(&word_set, "hello".as_bytes().try_into().unwrap());
                
 
         },
 
         Commands::Solve => {
-            println!("IN SOLVE");
-        io::stdout().flush().expect("Failed to flush stdout");
-            let valid_word_list = fs::read_to_string("validwords.txt").expect("Could not locate valid word list");
+            let valid_word_list = fs::read_to_string("validwords.txt")
+                                    .expect("Could not locate valid word list");
             
-            let words = valid_word_list.split_whitespace().collect();
-println!("make words");
-        io::stdout().flush().expect("Failed to flush stdout");
-
-        
-println!("making solver");
-        io::stdout().flush().expect("Failed to flush stdout");
-
+            let words: Vec<[u8; 5]> = valid_word_list.split_whitespace() 
+                .map(|s| s.as_bytes().try_into().unwrap()).collect();
 
             let mut solver = Solver::new(words);
 
- 
-println!("made solver");
-        io::stdout().flush().expect("Failed to flush stdout");
-
-
-
-            solver.solve(&mut GameState::new("spunk"));
+            solver.solve(&mut GameState::new("spunk".as_bytes().try_into().unwrap()));
         },
     }
 
