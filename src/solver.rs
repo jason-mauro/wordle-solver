@@ -4,14 +4,14 @@ use crate::word::*;
 
 
 use std::io::{self, Write};
-use rayon::prelude::*;
+use std::sync::Arc;
 pub struct Solver {
     // Cached map of each possible (answer, guess) -> possible feedbacks
     // The feedback is encoded in base 3 as 1 bit of 3 for each guess type.
     // 0 = miss
     // 1 = yellow
     // 2 = green
-    feedback_map: Vec<u8>,
+    feedback_map: Arc<Vec<u8>>,
     word_list: Vec<[u8; 5]>,
     in_candidate_list: Vec<bool>,
     candidates: Vec<usize>,
@@ -31,24 +31,12 @@ impl Solver {
 
    const POWER_OF_THREE: [u8; 5] = [1, 3,9,27,81];
 
-   pub fn new(word_list: Vec<[u8; 5]>) -> Solver {
+   pub fn new(word_list: Vec<[u8; 5]>, map: Arc<Vec<u8>> ) -> Solver {
 
 
         let length = word_list.len();
 
-        let mut map =  vec![0u8; length * length]; 
-
-        map.par_chunks_mut(length)
-            .enumerate()
-            .for_each(|(answer_idx, row)| {
-                let answer = word_list[answer_idx];
-
-                for (guess_idx, guess) in word_list.iter().enumerate() {
-                    row[guess_idx] = Self::feedback(answer, *guess);
-                }
-            });
         
-
         io::stdout().flush().expect("Failed to flush stdout");
         Solver {
             feedback_map: map,
@@ -158,7 +146,7 @@ impl Solver {
     }
 
 
-    fn feedback(answer: [u8; 5], guess: [u8; 5]) -> u8 {
+    pub fn feedback(answer: [u8; 5], guess: [u8; 5]) -> u8 {
         let mut result: u8 = 0;
 
         let mut map = [0; 26];
@@ -212,7 +200,7 @@ impl Solver {
         let n = self.word_list.len();
 
         for i in 0..candidate_size {
-            let feedback = self.feedback_map[self.candidates[i] * n + guess ] as usize;
+            let feedback = self.feedback_map[guess * n + self.candidates[i] ] as usize;
             counter[feedback] += 1;
         }
 
@@ -241,7 +229,7 @@ impl Solver {
         let mut max_entropy = f32::MIN;
 
 
-        if self.candidates.len() <= 5 {
+        if self.candidates.len() <= 2 {
             for &word in &self.candidates {
                 let entropy = self.calculate_entropy(word);
 
@@ -272,7 +260,12 @@ impl Solver {
             .iter()
             .filter(|candidate|
                 {
-                    self.feedback_map[**candidate * n + guess] == feedback
+                    if  self.feedback_map[guess * n + **candidate] != feedback{
+                        self.in_candidate_list[**candidate] = false;
+                        false
+                    } else {
+                        true
+                    }
                 }).copied().collect();
     }
 

@@ -12,6 +12,8 @@ use crate::solver::SolveResult;
 use rayon::prelude::*;
 use std::io::{self, Write};
 
+use std::sync::Arc;
+
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -73,25 +75,47 @@ fn main() {
 
             let n = answer_set.len();
 
+
+            let number_of_words = words.len();
+
+            let mut map =  vec![0u8; number_of_words * number_of_words];
+
+            let length = words.len();
+
+            map.par_chunks_mut(length)
+                .enumerate()
+                .for_each(|(answer_idx, row)| {
+                    let answer = words[answer_idx];
+
+                    for (guess_idx, guess) in words.iter().enumerate() {
+                        row[guess_idx] = Solver::feedback(*guess, answer);
+                    }
+                });
+        
+
+            let feedback: Arc<Vec<u8>> = Arc::new(map);
+
+
             let (number_guesses, number_failed) = answer_set 
-                .par_chunks(1000)
+                .par_chunks(answer_set.len() / 14)
                 .map(|chunk| 
                     {
 
-                        println!("Starting Chunk!");
                         let mut number_failed = 0usize;
 
                         let mut number_guesses = 0usize;
 
-                        let mut solver = Solver::new(words.clone());
+                        let mut solver = Solver::new(words.clone(), feedback.clone());
                         for word in chunk {
                             let result = solver.solve(&mut GameState::new(*word), false);
                             match result {
                                 SolveResult::Ok(num_guesses) => number_guesses += num_guesses as usize,
-                                SolveResult::Fail => number_failed += 1
+                                SolveResult::Fail => {
+                                    number_failed += 1;
+                                    println!("Failed on {}", String::from_utf8(word.to_vec()).unwrap());
+                                }
                             }; 
                         }
-                        println!("FINISHED CHUNK!");
 
                         (number_guesses, number_failed)
                     }).reduce(|| (0,0), |(a, b), (c, d)| 
